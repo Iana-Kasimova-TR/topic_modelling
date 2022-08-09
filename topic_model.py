@@ -73,9 +73,6 @@ def get_document_term_matrix(counter_docs, token_number):
     return get_tf_idf_matrix(sparse_mtx)
 
 def get_tokens_from_doc(doc):
-    # if doc is a list of tokens
-    # can we iterate by set
-    # constructor for counter, keys - id of tokens - list 
     return set(doc)
 
 def count_quantity_token_in_doc(doc, token):
@@ -87,7 +84,6 @@ def count_quantity_token_in_doc(doc, token):
 
 def get_tf_idf_matrix(mx):
     number_of_words_in_doc = np.matrix(mx.getnnz(axis=1)).transpose()
-    print(number_of_words_in_doc)
     tf = mx.multiply(1/number_of_words_in_doc)
     number_docs = mx.shape[0]
     item = mx.getnnz(axis=0)
