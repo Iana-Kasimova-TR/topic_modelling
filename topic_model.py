@@ -1,20 +1,21 @@
-from typing import Dict, List
-import numpy as np
-import pandas as pd
-from scipy.sparse import csr_matrix
-from sklearn import neighbors
-from sklearn.preprocessing import normalize
-from sklearn.decomposition import TruncatedSVD
-from sklearn.utils.extmath import randomized_svd
-from sklearn.feature_extraction.text import TfidfVectorizer
-from collections import Counter
-from nltk.stem.porter import PorterStemmer
-from numpy import linalg as LA
 import json
 import re
 import string
+from collections import Counter
+from typing import Dict, List
+
 import nltk
+import numpy as np
+import pandas as pd
 from nltk.corpus import stopwords
+from nltk.stem.porter import PorterStemmer
+from numpy import linalg as LA
+from scipy.sparse import csr_matrix
+from sklearn import neighbors
+from sklearn.decomposition import TruncatedSVD
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.preprocessing import normalize
+from sklearn.utils.extmath import randomized_svd
 
 # fit(return state) and predict(use twice) separately
 # sent path to file and iterate, methods accept generators
@@ -131,7 +132,14 @@ def remove_stopwords(text):
 # each row in matrix divide on ||x|| = sqrt(sum(x_i^2)), where x it is row
 def get_neighbors(idx, u, k):
     doc = u[idx]
-    docs = np.vstack((u[:idx, :], u[idx + 1 :,]))
+    docs = np.vstack(
+        (
+            u[:idx, :],
+            u[
+                idx + 1 :,
+            ],
+        )
+    )
     mult = np.matmul(docs, doc)
     return np.argsort(mult)[-k:]
 
