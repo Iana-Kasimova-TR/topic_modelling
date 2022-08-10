@@ -61,12 +61,10 @@ def get_token_dictionaries(line, token_number, token_quantity):
 def get_neighbors(idx, matrix, number_of_neighbors):
     """nested method"""
     norms = LA.norm(matrix, axis=1, keepdims=True)
-    matrix_norm = matrix / norms
-    doc = matrix_norm[idx]
-    mult = np.matmul(matrix_norm, doc)
-    return np.argpartition(a=mult, kth=-number_of_neighbors, axis=1)[
-        -number_of_neighbors:
-    ]
+    matrix /= norms
+    doc = matrix[idx]
+    mult = np.matmul(matrix, doc)
+    return np.argpartition(a=mult, kth=-number_of_neighbors)[-number_of_neighbors:]
 
 
 def get_document_term_matrix(counter_docs, token_number):
