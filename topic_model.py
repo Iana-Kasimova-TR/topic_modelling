@@ -2,9 +2,10 @@
 import re
 import string
 from collections import Counter
+from xmlrpc.client import Boolean
 
 import numpy as np
-import pandas as pd
+import csv
 from nltk.corpus import stopwords
 from nltk.stem.porter import PorterStemmer
 from numpy import linalg as LA
@@ -12,22 +13,30 @@ from scipy.sparse import csr_matrix
 from sklearn.utils.extmath import randomized_svd
 
 
-def fit(path_to_file: str, name_text_column: str):
+def fit(path_to_file: str, number_text_column: int, n_components: int, n_iter: int, random_state, combined_value: Boolean, quantity_threshold_up:int, quantity_threshold_down:int):
     """method which provide document-term matrix"""
     token_number: dict = {}
-    token_quantity: dict = {}
+    token_counter = Counter()
     counters_docs = []
-    for line in pd.read_csv(path_to_file, chunksize=1, sep=","):
-        line = clean_text(line[name_text_column])
-        token_number, token_quantity = get_token_dictionaries(
-            line, token_number, token_quantity
-        )
-        counters_docs.append(Counter(line))
-    document_term_mtx = get_document_term_matrix(counters_docs, token_number)
-    matrix, _, _ = randomized_svd(
-        document_term_mtx, n_components=5, n_iter=5, random_state=None
+    with open(path_to_file, newline = '') as csvfile:
+        reader = csv.reader(csvfile, delimiter=",")
+        next(reader)
+        for line in reader:
+            line = clean_text(line[number_text_column])
+            for word_item in line:
+                token_number.setdefault(word_item, len(token_number))
+            counter = Counter(line)
+            token_counter += counter    
+            counters_docs.append(counter)
+    token_quantity = dict(token_counter)
+    document_term_mtx = get_document_term_matrix(counters_docs, token_number, quantity_threshold_up, quantity_threshold_down, token_quantity)
+    matrix_U, matrix_S, matrix_V = randomized_svd(
+        document_term_mtx, n_components=n_components, n_iter=n_iter, random_state=random_state
     )
-    return matrix
+    if combined_value:
+        return matrix_U@matrix_S
+    else:
+        return matrix_U
 
 
 def predict(matrix, index: int, number_neighbors: int):
@@ -35,60 +44,39 @@ def predict(matrix, index: int, number_neighbors: int):
     return get_neighbors(index, matrix, number_neighbors)
 
 
-def get_base_for_matrix(counter_docs, token_number):
+def get_base_for_matrix(counter_docs, token_number, quantity_threshold_up, quantity_threshold_down, token_quantity):
     """nested method"""
     ar_row = []
     ar_col = []
     ar_val = []
     for idx, item in enumerate(counter_docs):
-        ar_row.extend(np.repeat(idx, len(item)))
-        ar_col.extend([token_number.get(token) for token in item.keys()])
-        ar_val.extend(list(item.values()))
+        needed_items = {token: quantity for token, quantity in item.items() if (token_quantity[token] > quantity_threshold_down) and (token_quantity[token] < quantity_threshold_up)}
+        ar_row += [idx] * len(needed_items)
+        ar_col += [token_number[token] for token in needed_items.keys()]
+        ar_val += list(needed_items.values())
     return ar_row, ar_col, ar_val
 
 
-def get_token_dictionaries(line, token_number, token_quantity):
+def get_neighbors(idxs, matrix, number_of_neighbors):
     """nested method"""
-    counter = 0
-    for word_item in line:
-        if word_item not in token_number.keys():
-            token_number[word_item] = counter
-            counter += 1
-        token_quantity[word_item] = token_quantity.get(word_item, 0) + 1
-    return token_number, token_quantity
+    neighbors_for_doc = {}
+    for idx in idxs:
+        norms = LA.norm(matrix, axis=1, keepdims=True)
+        matrix /= norms
+        doc = matrix[idx]
+        mult = np.matmul(matrix, doc)
+        ar = np.argpartition(a=mult, kth=-number_of_neighbors)
+        neighbors_for_doc[idx] = ar[-number_of_neighbors - 1:len(ar) - 1]
+    return neighbors_for_doc
 
 
-def get_neighbors(idx, matrix, number_of_neighbors):
+def get_document_term_matrix(counter_docs, token_number, quantity_threshold_up, quantity_threshold_down, token_quantity):
     """nested method"""
-    norms = LA.norm(matrix, axis=1, keepdims=True)
-    matrix /= norms
-    doc = matrix[idx]
-    mult = np.matmul(matrix, doc)
-    return np.argpartition(a=mult, kth=-number_of_neighbors)[-number_of_neighbors:]
-
-
-def get_document_term_matrix(counter_docs, token_number):
-    """nested method"""
-    ar_row, ar_col, ar_val = get_base_for_matrix(counter_docs, token_number)
+    ar_row, ar_col, ar_val = get_base_for_matrix(counter_docs, token_number, quantity_threshold_up, quantity_threshold_down, token_quantity)
     sparse_mtx = csr_matrix(
         (ar_val, (ar_row, ar_col)), shape=(len(counter_docs), len(token_number))
     )
     return get_tf_idf_matrix(sparse_mtx)
-
-
-def get_tokens_from_doc(doc):
-    """nested method"""
-    return set(doc)
-
-
-def count_quantity_token_in_doc(doc, token):
-    """nested method"""
-    counter = 0
-    for item in doc:
-        if item == token:
-            counter += 1
-    return counter
-
 
 def get_tf_idf_matrix(matrix):
     """nested method"""
@@ -100,15 +88,26 @@ def get_tf_idf_matrix(matrix):
     return tf_part.multiply(dataframe)
 
 
-def clean_text(corpus: pd.Series):
+# def clean_text(corpus: pd.Series):
+#     """nested method"""
+#     porter_stemmer = PorterStemmer()
+#     corpus = corpus.apply(remove_punctuation)
+#     corpus = corpus.apply(tokenization)
+#     corpus = corpus.apply(remove_stopwords)
+#     corpus = corpus.apply(lambda x: [item.lower() for item in x])
+#     corpus = corpus.apply(lambda x: [porter_stemmer.stem(word) for word in x])
+#     return corpus.to_numpy()[0]
+
+
+def clean_text(corpus: str):
     """nested method"""
     porter_stemmer = PorterStemmer()
-    corpus = corpus.apply(remove_punctuation)
-    corpus = corpus.apply(tokenization)
-    corpus = corpus.apply(remove_stopwords)
-    corpus = corpus.apply(lambda x: [item.lower() for item in x])
-    corpus = corpus.apply(lambda x: [porter_stemmer.stem(word) for word in x])
-    return corpus.to_numpy()[0]
+    corpus = remove_punctuation(corpus)
+    corpus = tokenization(corpus)
+    corpus = remove_stopwords(corpus)
+    corpus = [item.lower() for item in corpus]
+    corpus = [porter_stemmer.stem(word) for word in corpus]
+    return corpus
 
 
 def remove_punctuation(text):
@@ -134,8 +133,11 @@ def get_correctness_doc_count(
 ):
     """method wich will return value of metric"""
     neighbors = get_neighbors(index_doc, matrix, number_of_neighbors)
+    common_metric = 0
     counter = 0
-    for item in neighbors:
-        if dataframe[name_of_target][item] == dataframe[name_of_target][index_doc]:
-            counter += 1
-    return counter / number_of_neighbors
+    for index in index_doc:
+        for item in neighbors:
+            if dataframe[name_of_target][item] == dataframe[name_of_target][index]:
+                counter += 1
+        common_metric += counter / number_of_neighbors
+    return common_metric / len(index_doc)
