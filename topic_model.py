@@ -1,24 +1,32 @@
 """module for keeping logic for topic modelling"""
+import csv
 import re
 import string
 from collections import Counter
-from xmlrpc.client import Boolean
 
 import numpy as np
-import csv
 from nltk.corpus import stopwords
 from nltk.stem.porter import PorterStemmer
 from numpy import linalg as LA
 from scipy.sparse import csr_matrix
-from sklearn.utils.extmath import randomized_svd
+from sklearn.decomposition import TruncatedSVD
 
 
-def fit(path_to_file: str, number_text_column: int, n_components: int, n_iter: int, random_state, combined_value: Boolean, quantity_threshold_up:int, quantity_threshold_down:int):
+def fit(
+    path_to_file: str,
+    number_text_column: int,
+    n_components: int,
+    n_iter: int,
+    random_state,
+    algorithm: str,
+    quantity_threshold_up: int,
+    quantity_threshold_down: int,
+):
     """method which provide document-term matrix"""
     token_number: dict = {}
     token_counter = Counter()
     counters_docs = []
-    with open(path_to_file, newline = '') as csvfile:
+    with open(path_to_file, newline="", encoding="utf-8") as csvfile:
         reader = csv.reader(csvfile, delimiter=",")
         next(reader)
         for line in reader:
@@ -26,17 +34,24 @@ def fit(path_to_file: str, number_text_column: int, n_components: int, n_iter: i
             for word_item in line:
                 token_number.setdefault(word_item, len(token_number))
             counter = Counter(line)
-            token_counter += counter    
+            token_counter += counter
             counters_docs.append(counter)
     token_quantity = dict(token_counter)
-    document_term_mtx = get_document_term_matrix(counters_docs, token_number, quantity_threshold_up, quantity_threshold_down, token_quantity)
-    matrix_U, matrix_S, matrix_V = randomized_svd(
-        document_term_mtx, n_components=n_components, n_iter=n_iter, random_state=random_state
+    document_term_mtx = get_document_term_matrix(
+        counters_docs,
+        token_number,
+        quantity_threshold_up,
+        quantity_threshold_down,
+        token_quantity,
     )
-    if combined_value:
-        return matrix_U@matrix_S
-    else:
-        return matrix_U
+    svd = TruncatedSVD(
+        n_components=n_components,
+        n_iter=n_iter,
+        random_state=random_state,
+        algorithm=algorithm,
+    )
+    lsa_matrix = svd.fit_transform(document_term_mtx)
+    return lsa_matrix
 
 
 def predict(matrix, index: int, number_neighbors: int):
@@ -44,59 +59,60 @@ def predict(matrix, index: int, number_neighbors: int):
     return get_neighbors(index, matrix, number_neighbors)
 
 
-def get_base_for_matrix(counter_docs, token_number, quantity_threshold_up, quantity_threshold_down, token_quantity):
+def get_base_for_matrix(
+    counter_docs,
+    token_number,
+    quantity_threshold_up,
+    quantity_threshold_down,
+    token_quantity,
+):
     """nested method"""
     ar_row = []
     ar_col = []
     ar_val = []
     for idx, item in enumerate(counter_docs):
-        needed_items = {token: quantity for token, quantity in item.items() if (token_quantity[token] > quantity_threshold_down) and (token_quantity[token] < quantity_threshold_up)}
+        needed_items = {
+            token: quantity
+            for token, quantity in item.items()
+            if (token_quantity[token] > quantity_threshold_down)
+            and (token_quantity[token] < quantity_threshold_up)
+        }
         ar_row += [idx] * len(needed_items)
         ar_col += [token_number[token] for token in needed_items.keys()]
         ar_val += list(needed_items.values())
     return ar_row, ar_col, ar_val
 
 
-def get_neighbors(idxs, matrix, number_of_neighbors):
+def get_document_term_matrix(
+    counter_docs,
+    token_number,
+    quantity_threshold_up,
+    quantity_threshold_down,
+    token_quantity,
+):
     """nested method"""
-    neighbors_for_doc = {}
-    for idx in idxs:
-        norms = LA.norm(matrix, axis=1, keepdims=True)
-        matrix /= norms
-        doc = matrix[idx]
-        mult = np.matmul(matrix, doc)
-        ar = np.argpartition(a=mult, kth=-number_of_neighbors)
-        neighbors_for_doc[idx] = ar[-number_of_neighbors - 1:len(ar) - 1]
-    return neighbors_for_doc
-
-
-def get_document_term_matrix(counter_docs, token_number, quantity_threshold_up, quantity_threshold_down, token_quantity):
-    """nested method"""
-    ar_row, ar_col, ar_val = get_base_for_matrix(counter_docs, token_number, quantity_threshold_up, quantity_threshold_down, token_quantity)
+    ar_row, ar_col, ar_val = get_base_for_matrix(
+        counter_docs,
+        token_number,
+        quantity_threshold_up,
+        quantity_threshold_down,
+        token_quantity,
+    )
     sparse_mtx = csr_matrix(
         (ar_val, (ar_row, ar_col)), shape=(len(counter_docs), len(token_number))
     )
     return get_tf_idf_matrix(sparse_mtx)
+
 
 def get_tf_idf_matrix(matrix):
     """nested method"""
     number_of_words_in_doc = np.matrix(matrix.getnnz(axis=1)).transpose()
     tf_part = matrix.multiply(1 / number_of_words_in_doc)
     number_docs = matrix.shape[0]
+    # item it is in how many documents we face this token
     item = matrix.getnnz(axis=0)
     dataframe = tf_part.multiply(np.log(number_docs / item))
-    return tf_part.multiply(dataframe)
-
-
-# def clean_text(corpus: pd.Series):
-#     """nested method"""
-#     porter_stemmer = PorterStemmer()
-#     corpus = corpus.apply(remove_punctuation)
-#     corpus = corpus.apply(tokenization)
-#     corpus = corpus.apply(remove_stopwords)
-#     corpus = corpus.apply(lambda x: [item.lower() for item in x])
-#     corpus = corpus.apply(lambda x: [porter_stemmer.stem(word) for word in x])
-#     return corpus.to_numpy()[0]
+    return dataframe
 
 
 def clean_text(corpus: str):
@@ -128,16 +144,53 @@ def remove_stopwords(text):
     return output
 
 
-def get_correctness_doc_count(
-    dataframe, index_doc, matrix, number_of_neighbors, name_of_target
-):
-    """method wich will return value of metric"""
-    neighbors = get_neighbors(index_doc, matrix, number_of_neighbors)
-    common_metric = 0
-    counter = 0
-    for index in index_doc:
-        for item in neighbors:
-            if dataframe[name_of_target][item] == dataframe[name_of_target][index]:
-                counter += 1
-        common_metric += counter / number_of_neighbors
-    return common_metric / len(index_doc)
+def get_neighbors(idxs, matrix, number_of_neighbors):
+    """nested method"""
+    neighbors_for_doc = {}
+    for idx in idxs:
+        norms = LA.norm(matrix, axis=1, keepdims=True)
+        matrix /= norms
+        doc = matrix[idx]
+        mult = np.matmul(matrix, doc)
+        array_neighbors = np.argpartition(a=mult, kth=-number_of_neighbors)
+        neighbors_for_doc[idx] = array_neighbors[
+            -number_of_neighbors - 1 : len(array_neighbors) - 1
+        ]
+    return neighbors_for_doc
+
+
+# def get_correctness_doc_count(
+#     dataframe, index_doc, matrix, number_of_neighbors, name_of_target
+# ):
+#     """method wich will return value of metric"""
+#     neighbors = get_neighbors(index_doc, matrix, number_of_neighbors)
+#     common_metric = 0
+#     counter = 0
+#     for index in index_doc:
+#         for item in neighbors:
+#             if dataframe[name_of_target][item] == dataframe[name_of_target][index]:
+#                 counter += 1
+#         common_metric += counter / number_of_neighbors
+#     return common_metric / len(index_doc)
+
+
+def calc_metric_for_simularity_matrix(simularity_matrix, targett, k):
+    """
+    calculate metric
+    """
+    indexes_of_docs = np.argpartition(-simularity_matrix, axis=0, kth=k)
+    indexes_of_most_similar_docs = indexes_of_docs[: indexes_of_docs.shape[0], :k]
+    compare_group = np.add(targett[indexes_of_most_similar_docs].T, -targett)
+    return np.mean(np.count_nonzero(compare_group == 0, axis=0) / k)
+
+
+def calc_map_metric(k, matrix, targett):
+    """
+    calculate metric through cosinus calculate similarity
+    """
+    row_sums = matrix.sum(axis=1)
+    norm_dtm_svd_matrix = matrix / row_sums[:, np.newaxis]
+    dtm_svd_matrix_transpose = matrix.transpose()
+    dot_norm_transpose = norm_dtm_svd_matrix.dot(dtm_svd_matrix_transpose)
+    np.fill_diagonal(dot_norm_transpose, -1)
+    return calc_metric_for_simularity_matrix(dot_norm_transpose, targett, k)
