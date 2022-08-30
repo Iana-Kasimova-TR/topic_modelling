@@ -5,8 +5,8 @@ import string
 from collections import Counter
 
 import numpy as np
-from nltk.corpus import stopwords
-from nltk.stem.porter import PorterStemmer
+from nltk.corpus import stopwords, names
+from nltk.stem import WordNetLemmatizer
 from numpy import linalg as LA
 from scipy.sparse import csr_matrix
 from sklearn.decomposition import TruncatedSVD
@@ -51,7 +51,7 @@ def fit(
         algorithm=algorithm,
     )
     lsa_matrix = svd.fit_transform(document_term_mtx)
-    return lsa_matrix
+    return lsa_matrix, svd, token_number
 
 
 def predict(matrix, index: int, number_neighbors: int):
@@ -117,13 +117,21 @@ def get_tf_idf_matrix(matrix):
 
 def clean_text(corpus: str):
     """nested method"""
-    porter_stemmer = PorterStemmer()
+    lemmatizer = WordNetLemmatizer()
     corpus = remove_punctuation(corpus)
     corpus = tokenization(corpus)
-    corpus = remove_stopwords(corpus)
+    corpus = remove_unuseful_words(corpus)
+    corpus = remove_common_word(corpus)
     corpus = [item.lower() for item in corpus]
-    corpus = [porter_stemmer.stem(word) for word in corpus]
+    corpus = [lemmatizer.lemmatize(word) for word in corpus]
     return corpus
+
+def remove_unuseful_words(text):
+    result = []
+    for t in text:
+        if len(t) > 2:
+            result.append(t)
+    return result        
 
 
 def remove_punctuation(text):
@@ -138,10 +146,10 @@ def tokenization(text):
     return tokens
 
 
-def remove_stopwords(text):
+def remove_common_word(text):
     """nested method"""
-    output = [i for i in text if i not in stopwords.words("english")]
-    return output
+    sets = [stopwords.words("english"), names.words("male.txt"), names.words("female.txt")]
+    return [i for i in text if not any(i in item for item in sets)]
 
 
 def get_neighbors(idxs, matrix, number_of_neighbors):
@@ -194,3 +202,10 @@ def calc_map_metric(k, matrix, targett):
     dot_norm_transpose = norm_dtm_svd_matrix.dot(dtm_svd_matrix_transpose)
     np.fill_diagonal(dot_norm_transpose, -1)
     return calc_metric_for_simularity_matrix(dot_norm_transpose, targett, k)
+
+
+def get_keywords_for_topic(k, model, dict_token):
+    for i, comp in enumerate(model.components_):
+        vocab_comp = zip(dict_token, comp)
+    sorted_words = sorted(vocab_comp, key=lambda x:x[1], reverse=True)[:k]
+    print("\n".join(sorted_words))
